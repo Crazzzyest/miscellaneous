@@ -1,0 +1,543 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>3D Crowd Panic Simulator</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #0b1020; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+  #scene { display: block; width: 100%; height: 100%; cursor: crosshair; touch-action: none; }
+  #hud {
+    position: fixed; top: 14px; left: 14px; color: #dfe8ff;
+    background: rgba(12, 17, 34, 0.78); border: 1px solid rgba(130, 160, 255, 0.25);
+    border-radius: 12px; padding: 14px 16px; width: 240px; backdrop-filter: blur(6px);
+    user-select: none;
+  }
+  #hud h1 { font-size: 15px; margin: 0 0 4px; letter-spacing: 0.3px; }
+  #hud .hint { font-size: 12px; color: #93a3c8; line-height: 1.5; margin-bottom: 10px; }
+  #hud .stat { font-size: 12.5px; display: flex; justify-content: space-between; margin: 3px 0; }
+  #hud .stat b { font-variant-numeric: tabular-nums; }
+  #panicVal { color: #ff8a5c; }
+  #hud label { font-size: 12px; color: #93a3c8; display: block; margin-top: 10px; }
+  #hud input[type="range"] { width: 100%; accent-color: #7a9bff; }
+  #hud .row { display: flex; gap: 6px; margin-top: 10px; }
+  #hud button {
+    flex: 1; background: rgba(122, 155, 255, 0.15); color: #dfe8ff;
+    border: 1px solid rgba(130, 160, 255, 0.35); border-radius: 8px;
+    padding: 6px 4px; font-size: 11.5px; cursor: pointer;
+  }
+  #hud button:hover { background: rgba(122, 155, 255, 0.3); }
+  #hud button.dangerBtn { background: rgba(255, 60, 48, 0.18); border-color: rgba(255, 90, 70, 0.45); }
+  #hud button.dangerBtn:hover { background: rgba(255, 60, 48, 0.35); }
+</style>
+</head>
+<body>
+<canvas id="scene"></canvas>
+<div id="hud">
+  <h1>3D Crowd Panic Simulator</h1>
+  <div class="hint">Click the ground to spawn danger — the crowd flees and panic spreads.<br>Drag to orbit &middot; scroll / pinch to zoom.</div>
+  <div class="stat"><span>People</span><b id="countVal">0</b></div>
+  <div class="stat"><span>Panicking</span><b id="panicVal">0</b></div>
+  <label>Crowd size <span id="sizeLabel"></span></label>
+  <input type="range" id="sizeSlider" min="20" max="300" step="10" value="130">
+  <div class="row">
+    <button class="dangerBtn" id="btnDanger">Random danger</button>
+    <button id="btnClear">Clear</button>
+    <button id="btnReset">Reset</button>
+  </div>
+</div>
+<script>
+"use strict";
+// ---------------------------------------------------------------------------
+// 3D crowd simulator with flee/panic behaviour. Everything is rendered with a
+// tiny hand-rolled perspective projector onto a 2D canvas: the world is line
+// segments (stick people, ground grid) sorted back-to-front.
+// ---------------------------------------------------------------------------
+
+const canvas = document.getElementById("scene");
+const ctx = canvas.getContext("2d");
+
+const WORLD_R = 34;        // radius agents roam within
+const FEAR_RADIUS = 13;    // how far a danger is directly frightening
+const DANGER_LIFE = 7;     // seconds a danger stays active
+const NEAR = 0.4;          // camera near plane
+
+// --- camera --------------------------------------------------------------
+const cam = { yaw: 0.85, pitch: 0.42, dist: 46, tx: 0, ty: 1.0, tz: 0 };
+let view = null; // recomputed each frame: eye + orthonormal basis + focal
+
+function computeView() {
+  const cp = Math.cos(cam.pitch), sp = Math.sin(cam.pitch);
+  const cy = Math.cos(cam.yaw), sy = Math.sin(cam.yaw);
+  const ex = cam.tx + cam.dist * cp * sy;
+  const ey = cam.ty + cam.dist * sp;
+  const ez = cam.tz + cam.dist * cp * cy;
+  // forward: from eye toward target
+  let fx = cam.tx - ex, fy = cam.ty - ey, fz = cam.tz - ez;
+  const fl = Math.hypot(fx, fy, fz); fx /= fl; fy /= fl; fz /= fl;
+  // right = forward x worldUp, then up = right x forward
+  let rx = -fz, ry = 0, rz = fx;
+  const rl = Math.hypot(rx, rz) || 1; rx /= rl; rz /= rl;
+  const ux = ry * fz - rz * fy, uy = rz * fx - rx * fz, uz = rx * fy - ry * fx;
+  view = { ex, ey, ez, fx, fy, fz, rx, ry, rz, ux, uy, uz,
+           focal: canvas.height * 1.15, cx: canvas.width / 2, cy: canvas.height / 2 };
+}
+
+// world point -> camera space {x, y, z(depth)}
+function toCam(x, y, z) {
+  const dx = x - view.ex, dy = y - view.ey, dz = z - view.ez;
+  return {
+    x: dx * view.rx + dy * view.ry + dz * view.rz,
+    y: dx * view.ux + dy * view.uy + dz * view.uz,
+    z: dx * view.fx + dy * view.fy + dz * view.fz,
+  };
+}
+function camToScreen(c) {
+  const s = view.focal / c.z;
+  return { x: view.cx + c.x * s, y: view.cy - c.y * s, s };
+}
+
+// Draw a world-space segment, clipped against the near plane.
+function line3(x1, y1, z1, x2, y2, z2, color, width) {
+  let a = toCam(x1, y1, z1), b = toCam(x2, y2, z2);
+  if (a.z < NEAR && b.z < NEAR) return;
+  if (a.z < NEAR || b.z < NEAR) {
+    const t = (NEAR - a.z) / (b.z - a.z);
+    const m = { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t, z: NEAR };
+    if (a.z < NEAR) a = m; else b = m;
+  }
+  const p = camToScreen(a), q = camToScreen(b);
+  ctx.strokeStyle = color;
+  ctx.lineWidth = Math.max(0.6, width * (p.s + q.s) / 2);
+  ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(q.x, q.y); ctx.stroke();
+}
+
+// Filled circle at a world point, radius in world units.
+function dot3(x, y, z, r, color) {
+  const c = toCam(x, y, z);
+  if (c.z < NEAR) return;
+  const p = camToScreen(c);
+  ctx.fillStyle = color;
+  ctx.beginPath(); ctx.arc(p.x, p.y, Math.max(0.5, r * p.s), 0, Math.PI * 2); ctx.fill();
+}
+
+// Flat ellipse on the ground (shadows, danger rings). Approximated by
+// projecting points of the world-space circle.
+function groundCircle(x, z, r, color, fill, width) {
+  const STEPS = 26;
+  ctx.beginPath();
+  let started = false;
+  for (let i = 0; i <= STEPS; i++) {
+    const a = (i / STEPS) * Math.PI * 2;
+    const c = toCam(x + Math.cos(a) * r, 0.02, z + Math.sin(a) * r);
+    if (c.z < NEAR) { started = false; continue; }
+    const p = camToScreen(c);
+    if (!started) { ctx.moveTo(p.x, p.y); started = true; }
+    else ctx.lineTo(p.x, p.y);
+  }
+  if (fill) { ctx.fillStyle = color; ctx.fill(); }
+  else {
+    ctx.strokeStyle = color;
+    ctx.lineWidth = width || 1;
+    ctx.stroke();
+  }
+}
+
+// --- world state -----------------------------------------------------------
+let agents = [];
+let dangers = [];
+let panicCount = 0;
+
+function makeAgent() {
+  const ang = Math.random() * Math.PI * 2;
+  const rad = Math.sqrt(Math.random()) * WORLD_R * 0.9;
+  const heading = Math.random() * Math.PI * 2;
+  return {
+    x: Math.cos(ang) * rad, z: Math.sin(ang) * rad,
+    hx: Math.cos(heading), hz: Math.sin(heading),
+    speed: 0, fear: 0, phase: Math.random() * Math.PI * 2,
+    h: 0.9 + Math.random() * 0.25,               // height scale
+    hue: 195 + Math.random() * 40,               // calm colour variation
+    wanderTurn: 0,
+  };
+}
+
+function setCrowdSize(n) {
+  while (agents.length < n) agents.push(makeAgent());
+  agents.length = Math.min(agents.length, n);
+  document.getElementById("sizeLabel").textContent = "(" + n + ")";
+}
+
+function spawnDanger(x, z) {
+  dangers.push({ x, z, t: 0 });
+}
+
+// --- simulation ------------------------------------------------------------
+function step(dt) {
+  // age dangers
+  for (let i = dangers.length - 1; i >= 0; i--) {
+    dangers[i].t += dt;
+    if (dangers[i].t > DANGER_LIFE) dangers.splice(i, 1);
+  }
+
+  panicCount = 0;
+  const n = agents.length;
+  for (let i = 0; i < n; i++) {
+    const a = agents[i];
+
+    // -- direct threat from dangers
+    let fleeX = 0, fleeZ = 0, threat = 0;
+    for (const d of dangers) {
+      const dx = a.x - d.x, dz = a.z - d.z;
+      const dist = Math.hypot(dx, dz);
+      if (dist < FEAR_RADIUS) {
+        const w = 1 - dist / FEAR_RADIUS;
+        threat = Math.max(threat, w);
+        const inv = (0.6 + w * 1.6) / Math.max(dist, 0.4);
+        fleeX += dx * inv; fleeZ += dz * inv;
+      }
+    }
+    if (threat > 0) a.fear = Math.min(1, Math.max(a.fear, 0.45 + threat * 0.6));
+
+    // -- neighbours: separation + panic contagion
+    let sepX = 0, sepZ = 0;
+    for (let j = 0; j < n; j++) {
+      if (j === i) continue;
+      const b = agents[j];
+      const dx = a.x - b.x, dz = a.z - b.z;
+      const d2 = dx * dx + dz * dz;
+      if (d2 < 1.44 && d2 > 1e-6) {           // < 1.2 m: push apart
+        const d = Math.sqrt(d2);
+        const push = (1.2 - d) / d;
+        sepX += dx * push; sepZ += dz * push;
+      }
+      if (d2 < 9 && b.fear > 0.55 && b.fear > a.fear) {
+        // fear is contagious within 3 m
+        a.fear = Math.min(1, a.fear + (b.fear - a.fear) * dt * 2.2);
+        if (fleeX === 0 && fleeZ === 0) { fleeX += b.hx; fleeZ += b.hz; }
+      }
+    }
+
+    // fear decays once out of range
+    if (threat === 0) a.fear = Math.max(0, a.fear - dt * 0.22);
+    if (a.fear > 0.45) panicCount++;
+
+    // -- steering
+    let dirX, dirZ;
+    if (a.fear > 0.15 && (fleeX !== 0 || fleeZ !== 0)) {
+      dirX = fleeX; dirZ = fleeZ;
+    } else {
+      // wander: heading drifts smoothly
+      a.wanderTurn += (Math.random() - 0.5) * 4 * dt;
+      a.wanderTurn *= 0.95;
+      const c = Math.cos(a.wanderTurn * dt * 8), s = Math.sin(a.wanderTurn * dt * 8);
+      dirX = a.hx * c - a.hz * s; dirZ = a.hx * s + a.hz * c;
+    }
+    dirX += sepX * 1.4; dirZ += sepZ * 1.4;
+
+    // stay inside the world: steer back toward centre near the edge
+    const rad = Math.hypot(a.x, a.z);
+    if (rad > WORLD_R) {
+      const edge = (rad - WORLD_R) / 4;
+      dirX -= (a.x / rad) * edge * 3; dirZ -= (a.z / rad) * edge * 3;
+    }
+
+    // rotate heading toward desired direction, capped turn rate
+    const dl = Math.hypot(dirX, dirZ);
+    if (dl > 1e-4) {
+      dirX /= dl; dirZ /= dl;
+      const cross = a.hx * dirZ - a.hz * dirX;
+      const dotp = a.hx * dirX + a.hz * dirZ;
+      const want = Math.atan2(cross, dotp);
+      const maxTurn = (2.6 + a.fear * 6) * dt;
+      const turn = Math.max(-maxTurn, Math.min(maxTurn, want));
+      const c = Math.cos(turn), s = Math.sin(turn);
+      const nhx = a.hx * c - a.hz * s;
+      a.hz = a.hx * s + a.hz * c; a.hx = nhx;
+    }
+
+    // -- speed + position
+    const targetSpeed = 1.1 + a.fear * 4.4;
+    a.speed += (targetSpeed - a.speed) * Math.min(1, dt * 4);
+    a.x += a.hx * a.speed * dt;
+    a.z += a.hz * a.speed * dt;
+
+    // hard boundary
+    const r2 = Math.hypot(a.x, a.z);
+    if (r2 > WORLD_R + 4) { a.x *= (WORLD_R + 4) / r2; a.z *= (WORLD_R + 4) / r2; }
+
+    a.phase += a.speed * (3.2 + a.fear * 1.2) * dt;
+  }
+}
+
+// --- rendering -------------------------------------------------------------
+function drawGround() {
+  // filled disc (clip circle against near plane in camera space)
+  const pts = [];
+  const STEPS = 48;
+  for (let i = 0; i < STEPS; i++) {
+    const a = (i / STEPS) * Math.PI * 2;
+    pts.push(toCam(Math.cos(a) * (WORLD_R + 5), 0, Math.sin(a) * (WORLD_R + 5)));
+  }
+  const clipped = [];
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[i], b = pts[(i + 1) % pts.length];
+    const ain = a.z >= NEAR, bin = b.z >= NEAR;
+    if (ain) clipped.push(a);
+    if (ain !== bin) {
+      const t = (NEAR - a.z) / (b.z - a.z);
+      clipped.push({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t, z: NEAR });
+    }
+  }
+  if (clipped.length > 2) {
+    ctx.beginPath();
+    clipped.forEach((c, i) => {
+      const p = camToScreen(c);
+      if (i === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y);
+    });
+    ctx.closePath();
+    ctx.fillStyle = "#141b30";
+    ctx.fill();
+  }
+  // grid: concentric rings + spokes
+  for (let r = 8; r <= WORLD_R + 4; r += 8) {
+    groundCircle(0, 0, r, "rgba(120, 150, 255, 0.12)", false, 1);
+  }
+  for (let i = 0; i < 12; i++) {
+    const a = (i / 12) * Math.PI * 2;
+    line3(0, 0.02, 0, Math.cos(a) * (WORLD_R + 4), 0.02, Math.sin(a) * (WORLD_R + 4),
+          "rgba(120, 150, 255, 0.08)", 0.03);
+  }
+  groundCircle(0, 0, WORLD_R + 4, "rgba(140, 170, 255, 0.35)", false, 1.6);
+}
+
+function drawDanger(d) {
+  const pulse = 0.5 + 0.5 * Math.sin(d.t * 9);
+  const fade = Math.min(1, (DANGER_LIFE - d.t) / 1.2);
+  // expanding shockwave rings
+  const wave = (d.t * 6) % FEAR_RADIUS;
+  groundCircle(d.x, d.z, wave, `rgba(255, 70, 55, ${(0.5 * (1 - wave / FEAR_RADIUS) * fade).toFixed(3)})`, false, 2);
+  groundCircle(d.x, d.z, FEAR_RADIUS, `rgba(255, 70, 55, ${(0.16 * fade).toFixed(3)})`, false, 1.2);
+  groundCircle(d.x, d.z, 1.1 + pulse * 0.35, `rgba(255, 60, 45, ${(0.55 * fade).toFixed(3)})`, true);
+  // spiky hazard star
+  const h = 1.6 + pulse * 0.5;
+  const col = `rgba(255, ${80 + pulse * 60 | 0}, 50, ${fade.toFixed(3)})`;
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * Math.PI * 2 + d.t * 2.5;
+    line3(d.x, h, d.z, d.x + Math.cos(a) * 0.9, h + 0.5, d.z + Math.sin(a) * 0.9, col, 0.07);
+  }
+  line3(d.x, 0, d.z, d.x, h, d.z, col, 0.1);
+  dot3(d.x, h + 0.15, d.z, 0.28 + pulse * 0.1, col);
+}
+
+function drawAgent(a) {
+  const s = a.h;
+  const fear = a.fear;
+  const run = Math.min(1, fear * 1.4);
+  const p = a.phase;
+  const swing = Math.sin(p);
+  const stride = (0.32 + 0.5 * run) * s;
+  const lean = 0.07 + 0.55 * run;
+  const bob = Math.abs(Math.cos(p)) * (0.03 + 0.07 * run) * s;
+  const hipY = 0.92 * s - bob;
+  const rx = a.hz, rz = -a.hx; // sideways unit vector
+
+  // local (side, forward, height) -> world
+  const P = (side, fwd, y) => ({
+    x: a.x + rx * side + a.hx * fwd,
+    y, z: a.z + rz * side + a.hz * fwd,
+  });
+
+  // colour: calm bluish-white -> panicked orange (lerp in RGB so the
+  // transition doesn't sweep through green)
+  const calmB = 235 + (a.hue - 195) * 0.5; // slight per-agent variation
+  const cr = 205 + (255 - 205) * run;
+  const cg = 220 + (110 - 220) * run;
+  const cb = calmB + (60 - calmB) * run;
+  const col = `rgb(${cr | 0}, ${cg | 0}, ${cb | 0})`;
+  const W = 0.055 * s;
+
+  // shadow
+  const shC = toCam(a.x, 0.01, a.z);
+  if (shC.z >= NEAR) {
+    const sp2 = camToScreen(shC);
+    ctx.fillStyle = "rgba(0, 0, 0, 0.35)";
+    ctx.beginPath();
+    ctx.ellipse(sp2.x, sp2.y, 0.32 * s * sp2.s, 0.32 * s * sp2.s * Math.sin(cam.pitch), 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // spine + head
+  const spineLen = 0.45 * s;
+  const shFwd = Math.sin(lean) * spineLen;
+  const shY = hipY + Math.cos(lean) * spineLen;
+  const hip = P(0, 0, hipY);
+  const neck = P(0, shFwd, shY);
+  line3(hip.x, hip.y, hip.z, neck.x, neck.y, neck.z, col, W * 1.15);
+  const headFwd = Math.sin(lean) * (spineLen + 0.24 * s);
+  const headY = hipY + Math.cos(lean) * (spineLen + 0.24 * s);
+  const head = P(0, headFwd, headY);
+  dot3(head.x, head.y, head.z, 0.115 * s, col);
+
+  // legs (right leg is half a cycle out of phase)
+  for (const sign of [1, -1]) {
+    const legSwing = sign === 1 ? swing : -swing;
+    const legLift = Math.max(0, sign === 1 ? Math.cos(p) : -Math.cos(p));
+    const footFwd = legSwing * stride;
+    const lift = legLift * (0.06 + 0.3 * run) * s;
+    const hipJ = P(sign * 0.07 * s, 0, hipY);
+    const foot = P(sign * 0.1 * s, footFwd, lift);
+    const kneeFwd = footFwd * 0.5 + (0.1 + 0.18 * run) * s * (0.4 + legLift);
+    const knee = P(sign * 0.09 * s, kneeFwd, (hipY + lift) * 0.52);
+    line3(hipJ.x, hipJ.y, hipJ.z, knee.x, knee.y, knee.z, col, W);
+    line3(knee.x, knee.y, knee.z, foot.x, foot.y, foot.z, col, W);
+  }
+
+  // arms swing opposite to legs; panicked arms pump up
+  for (const sign of [1, -1]) {
+    const armSwing = (sign === 1 ? -swing : swing) * (0.3 + 0.55 * run);
+    const shJ = P(sign * 0.17 * s, shFwd, shY - 0.02 * s);
+    const elbowDrop = (0.26 - 0.12 * run) * s;
+    const handDrop = (0.5 - 0.28 * run) * s;
+    const elbow = P(sign * 0.2 * s, shFwd + armSwing * 0.22 * s, shY - elbowDrop);
+    const hand = P(sign * 0.21 * s, shFwd + (armSwing * 0.55 + 0.18 * run) * s, shY - handDrop);
+    line3(shJ.x, shJ.y, shJ.z, elbow.x, elbow.y, elbow.z, col, W * 0.9);
+    line3(elbow.x, elbow.y, elbow.z, hand.x, hand.y, hand.z, col, W * 0.9);
+  }
+
+  // panic marker: small "!" above the head
+  if (fear > 0.5) {
+    const my = headY + 0.28 * s + Math.sin(p * 2) * 0.03;
+    const mk = P(0, headFwd, my);
+    line3(mk.x, mk.y + 0.1 * s, mk.z, mk.x, mk.y + 0.26 * s, mk.z, "rgba(255,90,60,0.9)", 0.05);
+    dot3(mk.x, mk.y + 0.02 * s, mk.z, 0.035 * s, "rgba(255,90,60,0.9)");
+  }
+}
+
+function render() {
+  const w = canvas.width, h = canvas.height;
+  // sky
+  const grad = ctx.createLinearGradient(0, 0, 0, h);
+  grad.addColorStop(0, "#0b1020");
+  grad.addColorStop(1, "#1b2444");
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, w, h);
+
+  computeView();
+  ctx.lineCap = "round";
+  drawGround();
+  for (const d of dangers) drawDanger(d);
+
+  // painter's algorithm: farthest agents first
+  const order = agents.map(a => ({ a, z: toCam(a.x, 1, a.z).z }))
+                      .filter(o => o.z > NEAR)
+                      .sort((p, q) => q.z - p.z);
+  for (const o of order) drawAgent(o.a);
+
+  document.getElementById("countVal").textContent = agents.length;
+  document.getElementById("panicVal").textContent = panicCount;
+}
+
+// --- input -----------------------------------------------------------------
+let dragging = false, moved = 0, lastX = 0, lastY = 0;
+let pinchDist = 0;
+
+function pointerDown(x, y) { dragging = true; moved = 0; lastX = x; lastY = y; }
+function pointerMove(x, y) {
+  if (!dragging) return;
+  const dx = x - lastX, dy = y - lastY;
+  moved += Math.abs(dx) + Math.abs(dy);
+  cam.yaw -= dx * 0.005;
+  cam.pitch = Math.min(1.35, Math.max(0.12, cam.pitch + dy * 0.004));
+  lastX = x; lastY = y;
+}
+function pointerUp(x, y) {
+  if (dragging && moved < 6) clickGround(x, y); // it was a tap, not a drag
+  dragging = false;
+}
+
+// Cast a ray through the pixel and intersect the ground plane (y = 0).
+function clickGround(px, py) {
+  // pointer events are in CSS pixels; the projection works in canvas pixels
+  px *= devicePixelRatio; py *= devicePixelRatio;
+  const nx = (px - view.cx) / view.focal;
+  const ny = (view.cy - py) / view.focal;
+  const dx = view.rx * nx + view.ux * ny + view.fx;
+  const dy = view.ry * nx + view.uy * ny + view.fy;
+  const dz = view.rz * nx + view.uz * ny + view.fz;
+  if (Math.abs(dy) < 1e-6) return;
+  const t = -view.ey / dy;
+  if (t <= 0) return;
+  const gx = view.ex + dx * t, gz = view.ez + dz * t;
+  if (Math.hypot(gx, gz) < WORLD_R + 8) spawnDanger(gx, gz);
+}
+
+canvas.addEventListener("mousedown", e => pointerDown(e.clientX, e.clientY));
+window.addEventListener("mousemove", e => pointerMove(e.clientX, e.clientY));
+window.addEventListener("mouseup", e => pointerUp(e.clientX, e.clientY));
+canvas.addEventListener("wheel", e => {
+  e.preventDefault();
+  cam.dist = Math.min(110, Math.max(10, cam.dist * (1 + e.deltaY * 0.001)));
+}, { passive: false });
+
+canvas.addEventListener("touchstart", e => {
+  e.preventDefault();
+  if (e.touches.length === 1) pointerDown(e.touches[0].clientX, e.touches[0].clientY);
+  else if (e.touches.length === 2) {
+    dragging = false;
+    pinchDist = Math.hypot(e.touches[0].clientX - e.touches[1].clientX,
+                           e.touches[0].clientY - e.touches[1].clientY);
+  }
+}, { passive: false });
+canvas.addEventListener("touchmove", e => {
+  e.preventDefault();
+  if (e.touches.length === 1) pointerMove(e.touches[0].clientX, e.touches[0].clientY);
+  else if (e.touches.length === 2) {
+    const d = Math.hypot(e.touches[0].clientX - e.touches[1].clientX,
+                         e.touches[0].clientY - e.touches[1].clientY);
+    if (pinchDist > 0) cam.dist = Math.min(110, Math.max(10, cam.dist * pinchDist / d));
+    pinchDist = d;
+  }
+}, { passive: false });
+canvas.addEventListener("touchend", e => {
+  e.preventDefault();
+  if (e.touches.length === 0 && e.changedTouches.length === 1)
+    pointerUp(e.changedTouches[0].clientX, e.changedTouches[0].clientY);
+}, { passive: false });
+
+// HUD controls
+const slider = document.getElementById("sizeSlider");
+slider.addEventListener("input", () => setCrowdSize(+slider.value));
+document.getElementById("btnDanger").addEventListener("click", () => {
+  const a = Math.random() * Math.PI * 2, r = Math.sqrt(Math.random()) * WORLD_R * 0.8;
+  spawnDanger(Math.cos(a) * r, Math.sin(a) * r);
+});
+document.getElementById("btnClear").addEventListener("click", () => { dangers = []; });
+document.getElementById("btnReset").addEventListener("click", () => {
+  dangers = []; agents = []; setCrowdSize(+slider.value);
+});
+
+// --- main loop ---------------------------------------------------------------
+function resize() {
+  canvas.width = window.innerWidth * devicePixelRatio;
+  canvas.height = window.innerHeight * devicePixelRatio;
+  canvas.style.width = window.innerWidth + "px";
+  canvas.style.height = window.innerHeight + "px";
+}
+window.addEventListener("resize", resize);
+resize();
+computeView();
+setCrowdSize(+slider.value);
+
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min(0.05, (now - last) / 1000);
+  last = now;
+  step(dt);
+  render();
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
