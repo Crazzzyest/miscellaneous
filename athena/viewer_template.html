@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Athena Parthenos</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;0,600;1,500&family=IBM+Plex+Sans:wght@400;500&display=swap">
+<style>
+  /* Single-theme by design: a sculpture on a dark studio stage. Ground and
+     every colour are painted explicitly so the page holds on any host. */
+  :root { --bg: #15171b; --panel: rgba(21, 23, 27, 0.78); --line: rgba(236, 231, 218, 0.16); --fg: #ece7da; --muted: #9d968a; --accent: #c9a24a; --accent-ink: #1a1408; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); font: 14px/1.45 "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif; overflow: hidden; }
+  #stage { position: fixed; inset: 0; width: 100%; height: 100%; touch-action: none; display: block; background: var(--bg); }
+  #title { position: fixed; left: 16px; top: 14px; pointer-events: none; }
+  #title h1 { margin: 0; font: italic 500 30px/1 "Cormorant Garamond", Georgia, "Times New Roman", serif; letter-spacing: 0.01em; color: var(--fg); text-wrap: balance; }
+  #title p { margin: 4px 0 0; font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); }
+  #hud { position: fixed; left: 12px; right: 12px; bottom: 12px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; pointer-events: none; }
+  #hud button { pointer-events: auto; background: var(--panel); color: var(--fg); border: 1px solid var(--line); border-radius: 999px; padding: 8px 14px; font: 500 13px/1 "IBM Plex Sans", system-ui, sans-serif; cursor: pointer; backdrop-filter: blur(6px); }
+  #hud button:hover { border-color: var(--accent); }
+  #hud button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  #hud button.active { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  #hud .spacer { flex: 1 1 auto; }
+  #info { font-size: 11px; letter-spacing: 0.04em; color: var(--muted); font-variant-numeric: tabular-nums; pointer-events: none; padding: 6px 2px; }
+  #loading { position: fixed; inset: 0; display: grid; place-items: center; font: italic 500 22px/1 "Cormorant Garamond", Georgia, serif; letter-spacing: 0.04em; color: var(--muted); background: var(--bg); }
+  @media (max-width: 520px) { #title h1 { font-size: 24px; } #hud button { padding: 8px 11px; font-size: 12px; } #info { width: 100%; } }
+  @media (prefers-reduced-motion: reduce) { #spin { display: none; } }
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+<div id="title"><h1>Athena Parthenos</h1><p>Sculpted from signed-distance fields</p></div>
+<div id="hud">
+  <button data-view="face">Face</button>
+  <button data-view="threeq">Three-quarter</button>
+  <button data-view="profile">Profile</button>
+  <button data-view="bust">Bust</button>
+  <button data-view="full">Full figure</button>
+  <button data-view="shield">Shield</button>
+  <button id="spin">Spin</button>
+  <span class="spacer"></span>
+  <span id="info"><span id="stats"></span> &middot; drag to orbit, pinch or scroll to zoom, two-finger drag to pan</span>
+</div>
+<div id="loading">Building Athena&hellip;</div>
+<script>/*__THREE__*/</script>
+<script type="application/json" id="mesh-data">/*__MESH_JSON__*/</script>
+<script>
+(function () {
+  var data = JSON.parse(document.getElementById('mesh-data').textContent);
+  var canvas = document.getElementById('stage');
+  var renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true, preserveDrawingBuffer: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.05;
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+  var scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x15171b);
+  var camera = new THREE.PerspectiveCamera(32, 1, 0.01, 50);
+
+  // Studio light rig: warm key, cool fill, hard rim so the bronze reads as metal.
+  var hemi = new THREE.HemisphereLight(0xdfe6f2, 0x3a3128, 0.55);
+  scene.add(hemi);
+  var key = new THREE.DirectionalLight(0xfff1dc, 2.4);
+  key.position.set(1.6, 3.2, 2.6);
+  key.castShadow = true;
+  key.shadow.mapSize.set(2048, 2048);
+  key.shadow.camera.left = -1.6; key.shadow.camera.right = 1.6;
+  key.shadow.camera.top = 3.0; key.shadow.camera.bottom = -0.5;
+  key.shadow.camera.near = 0.5; key.shadow.camera.far = 12;
+  key.shadow.bias = -0.0004;
+  key.shadow.normalBias = 0.01;
+  scene.add(key);
+  var fill = new THREE.DirectionalLight(0xbfd0ff, 0.7);
+  fill.position.set(-2.5, 1.5, 1.5);
+  scene.add(fill);
+  var rim = new THREE.DirectionalLight(0xffffff, 1.4);
+  rim.position.set(-0.8, 2.5, -3.0);
+  scene.add(rim);
+
+  // Ground disc that only catches shadow, so the plinth feels grounded.
+  var ground = new THREE.Mesh(new THREE.CircleGeometry(6, 64), new THREE.ShadowMaterial({ opacity: 0.35 }));
+  ground.rotation.x = -Math.PI / 2;
+  ground.position.y = -0.09;
+  ground.receiveShadow = true;
+  scene.add(ground);
+
+  function decode(b64, Ctor) {
+    var bin = atob(b64);
+    var bytes = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return new Ctor(bytes.buffer);
+  }
+
+  var group = new THREE.Group();
+  var triangles = 0;
+  data.parts.forEach(function (part) {
+    var q = decode(part.positions, Uint16Array);
+    var n8 = decode(part.normals, Int8Array);
+    var idx = decode(part.indices, Uint32Array);
+    var pos = new Float32Array(q.length);
+    for (var i = 0; i < q.length; i += 3) {
+      pos[i] = part.min[0] + (q[i] / 65535) * (part.max[0] - part.min[0]);
+      pos[i + 1] = part.min[1] + (q[i + 1] / 65535) * (part.max[1] - part.min[1]);
+      pos[i + 2] = part.min[2] + (q[i + 2] / 65535) * (part.max[2] - part.min[2]);
+    }
+    var nrm = new Float32Array(n8.length);
+    for (var j = 0; j < n8.length; j++) nrm[j] = n8[j] / 127;
+    var geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    geo.setAttribute('normal', new THREE.BufferAttribute(nrm, 3));
+    geo.setIndex(new THREE.BufferAttribute(idx, 1));
+    var m = data.materials[part.material];
+    var mat = new THREE.MeshStandardMaterial({ color: new THREE.Color(m.color[0], m.color[1], m.color[2]), metalness: m.metalness, roughness: m.roughness });
+    var mesh = new THREE.Mesh(geo, mat);
+    mesh.name = part.name;
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    group.add(mesh);
+    triangles += idx.length / 3;
+  });
+  scene.add(group);
+  document.getElementById('stats').textContent = data.parts.length + ' parts, ' + triangles.toLocaleString() + ' triangles';
+  document.getElementById('loading').remove();
+
+  // ---- orbit controls (mouse + touch), written inline so the page has no
+  // dependency beyond three.min.js itself.
+  var target = new THREE.Vector3(0, 1.0, 0);
+  var spherical = { theta: 0.4, phi: 1.35, radius: 4.2 };
+  var spinning = false;
+  var views = {
+    face:    { target: [0, 1.69, 0.05], theta: 0.0,  phi: 1.52, radius: 0.55 },
+    threeq:  { target: [0, 1.66, 0.02], theta: 0.75, phi: 1.40, radius: 0.75 },
+    profile: { target: [0, 1.70, 0.0],  theta: 1.57, phi: 1.50, radius: 0.70 },
+    bust:    { target: [0, 1.45, 0.0],  theta: 0.35, phi: 1.40, radius: 1.5 },
+    full:    { target: [0.05, 1.05, 0.0], theta: 0.45, phi: 1.40, radius: 4.6 },
+    shield:  { target: [0.5, 0.5, 0.0], theta: 1.9,  phi: 1.35, radius: 1.6 }
+  };
+  function applyView(name) {
+    var v = views[name];
+    target.set(v.target[0], v.target[1], v.target[2]);
+    spherical.theta = v.theta; spherical.phi = v.phi; spherical.radius = v.radius;
+    Array.prototype.forEach.call(document.querySelectorAll('#hud button[data-view]'), function (b) { b.classList.toggle('active', b.dataset.view === name); });
+  }
+  window.setView = applyView;
+  Array.prototype.forEach.call(document.querySelectorAll('#hud button[data-view]'), function (b) {
+    b.addEventListener('click', function () { applyView(b.dataset.view); });
+  });
+  document.getElementById('spin').addEventListener('click', function () {
+    spinning = !spinning;
+    this.classList.toggle('active', spinning);
+  });
+
+  var pointers = {};
+  var lastPinch = 0;
+  var lastMid = null;
+  canvas.addEventListener('pointerdown', function (e) { pointers[e.pointerId] = { x: e.clientX, y: e.clientY, button: e.button }; canvas.setPointerCapture(e.pointerId); });
+  canvas.addEventListener('pointerup', function (e) { delete pointers[e.pointerId]; lastPinch = 0; lastMid = null; });
+  canvas.addEventListener('pointercancel', function (e) { delete pointers[e.pointerId]; lastPinch = 0; lastMid = null; });
+  canvas.addEventListener('pointermove', function (e) {
+    var p = pointers[e.pointerId];
+    if (!p) return;
+    var ids = Object.keys(pointers);
+    if (ids.length === 1) {
+      var dx = e.clientX - p.x, dy = e.clientY - p.y;
+      if (p.button === 2 || e.shiftKey) pan(dx, dy); else { spherical.theta -= dx * 0.006; spherical.phi = Math.min(3.0, Math.max(0.15, spherical.phi - dy * 0.006)); }
+      p.x = e.clientX; p.y = e.clientY;
+    } else if (ids.length === 2) {
+      p.x = e.clientX; p.y = e.clientY;
+      var a = pointers[ids[0]], b = pointers[ids[1]];
+      var dist = Math.hypot(a.x - b.x, a.y - b.y);
+      var mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+      if (lastPinch) spherical.radius = Math.min(12, Math.max(0.15, spherical.radius * (lastPinch / dist)));
+      if (lastMid) pan(mid.x - lastMid.x, mid.y - lastMid.y);
+      lastPinch = dist; lastMid = mid;
+    }
+  });
+  canvas.addEventListener('wheel', function (e) { e.preventDefault(); spherical.radius = Math.min(12, Math.max(0.15, spherical.radius * Math.exp(e.deltaY * 0.0012))); }, { passive: false });
+  canvas.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+  function pan(dx, dy) {
+    var scale = spherical.radius * 0.0012;
+    var right = new THREE.Vector3().setFromMatrixColumn(camera.matrix, 0);
+    var up = new THREE.Vector3().setFromMatrixColumn(camera.matrix, 1);
+    target.addScaledVector(right, -dx * scale).addScaledVector(up, dy * scale);
+  }
+
+  function resize() {
+    var w = canvas.clientWidth || window.innerWidth, h = canvas.clientHeight || window.innerHeight;
+    renderer.setSize(w, h, false);
+    camera.aspect = w / h;
+    camera.updateProjectionMatrix();
+  }
+  window.addEventListener('resize', resize);
+  resize();
+  applyView((location.hash || '').replace('#', '') in views ? location.hash.replace('#', '') : 'threeq');
+
+  function frame() {
+    if (spinning) spherical.theta += 0.006;
+    camera.position.set(
+      target.x + spherical.radius * Math.sin(spherical.phi) * Math.sin(spherical.theta),
+      target.y + spherical.radius * Math.cos(spherical.phi),
+      target.z + spherical.radius * Math.sin(spherical.phi) * Math.cos(spherical.theta));
+    camera.lookAt(target);
+    renderer.render(scene, camera);
+    window.__frameCount = (window.__frameCount || 0) + 1;
+    requestAnimationFrame(frame);
+  }
+  frame();
+})();
+</script>
+</body>
+</html>

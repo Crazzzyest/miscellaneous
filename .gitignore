@@ -1,0 +1,8 @@
+# Generated OBJ is ~77 MB; regenerate with athena/generate_athena.py.
+athena/output/athena.obj
+athena/output/athena.mtl
+athena/output/athena_mesh.json
+athena/output/athena_*_*.obj
+athena/output/preview.html
+athena/output/head_viewer.html
+__pycache__/
