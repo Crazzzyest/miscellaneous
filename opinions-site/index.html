@@ -1,0 +1,572 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Opinions and Arguments</title>
+<meta name="description" content="A running list of opinions, the arguments behind them, and a place to reply.">
+<style>
+  :root {
+    --bg: #fafaf7;
+    --surface: #ffffff;
+    --text: #1d1d1b;
+    --muted: #6b6b66;
+    --border: #e4e2dc;
+    --accent: #2f5d50;
+    --accent-contrast: #ffffff;
+    --danger: #a3341f;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #141413;
+      --surface: #1c1c1a;
+      --text: #ecebe6;
+      --muted: #9a9a93;
+      --border: #2e2e2b;
+      --accent: #7fc4ad;
+      --accent-contrast: #10201b;
+      --danger: #e8806b;
+    }
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 17px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+
+  .page { max-width: 720px; margin: 0 auto; padding: 0 16px 80px; }
+
+  header.site-header { padding: 48px 0 24px; }
+  header.site-header h1 { margin: 0 0 8px; font-size: 2rem; line-height: 1.2; }
+  header.site-header p { margin: 0; color: var(--muted); }
+
+  .storage-notice {
+    margin: 16px 0 0;
+    padding: 10px 14px;
+    border: 1px dashed var(--border);
+    border-radius: 8px;
+    color: var(--muted);
+    font-size: 0.9rem;
+  }
+  .storage-notice[hidden] { display: none; }
+
+  /* Horizontal scroll lives inside the nav on purpose, so many categories never cause page-level sideways scroll on phones. */
+  nav.category-nav {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    display: flex;
+    gap: 8px;
+    padding: 10px 0;
+    overflow-x: auto;
+    background: var(--bg);
+    border-bottom: 1px solid var(--border);
+  }
+  nav.category-nav a {
+    flex: none;
+    padding: 4px 14px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    color: var(--text);
+    text-decoration: none;
+    font-size: 0.9rem;
+  }
+  nav.category-nav a:hover,
+  nav.category-nav a:focus-visible { border-color: var(--accent); color: var(--accent); }
+
+  section.category { padding-top: 32px; scroll-margin-top: 56px; }
+  section.category > h2 { margin: 0 0 4px; font-size: 1.5rem; }
+
+  .subcategory > h3 {
+    margin: 28px 0 8px;
+    font-size: 0.8rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  article.opinion {
+    margin: 12px 0;
+    padding: 18px 20px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+  }
+  article.opinion h4 { margin: 0 0 10px; font-size: 1.1rem; line-height: 1.35; }
+  article.opinion ul.arguments { margin: 0; padding-left: 1.2em; }
+  article.opinion ul.arguments li { margin: 6px 0; }
+
+  details.replies { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border); }
+  details.replies > summary { cursor: pointer; color: var(--accent); font-size: 0.95rem; }
+
+  .reply-list { margin: 12px 0 0; padding: 0; list-style: none; }
+  .reply-list li { margin: 10px 0; padding: 10px 12px; background: var(--bg); border-radius: 8px; }
+  .reply-list .reply-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+  .reply-list .reply-date { display: block; margin-top: 4px; color: var(--muted); font-size: 0.8rem; }
+
+  form.reply-form { margin-top: 14px; }
+  form.reply-form textarea {
+    display: block;
+    width: 100%;
+    min-height: 84px;
+    padding: 10px 12px;
+    resize: vertical;
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font: inherit;
+    font-size: 0.95rem;
+  }
+  form.reply-form textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .form-footer { display: flex; align-items: center; gap: 12px; margin-top: 8px; }
+  form.reply-form button {
+    padding: 7px 18px;
+    background: var(--accent);
+    color: var(--accent-contrast);
+    border: 0;
+    border-radius: 8px;
+    font: inherit;
+    font-size: 0.9rem;
+    cursor: pointer;
+  }
+  form.reply-form button:disabled { opacity: 0.6; cursor: default; }
+  .form-status { font-size: 0.85rem; color: var(--muted); }
+  .form-status.is-error { color: var(--danger); }
+
+  .visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+</style>
+</head>
+<body>
+<div class="page">
+  <header class="site-header">
+    <h1>Opinions and arguments</h1>
+    <p>Things I believe, and why. Disagree, add a point, or ask a question: open any opinion and reply.</p>
+    <p class="storage-notice" id="storage-notice" role="status" hidden></p>
+  </header>
+
+  <nav class="category-nav" id="category-nav" aria-label="Categories"></nav>
+  <main id="site-content"></main>
+  <noscript><p>This page needs JavaScript to show the opinions and the reply fields.</p></noscript>
+</div>
+
+<script>
+/*
+ * Shared replies: leave this empty and replies are saved in the visitor's own browser only.
+ * Paste the URL of a Firebase Realtime Database (see README.md in this folder) and every visitor sees every reply.
+ * Example: "https://my-opinions-default-rtdb.europe-west1.firebasedatabase.app"
+ */
+const REPLIES_DATABASE_URL = "";
+
+const LOCAL_REPLIES_STORAGE_KEY = "opinions-site-replies-v1";
+const MAX_REPLY_LENGTH = 1000;
+
+/*
+ * All content lives here. To add an opinion, add an object to a subcategory's "opinions" list.
+ * Opinion ids must stay stable once published, because replies are stored under them.
+ * Keep user-facing text free of em-dashes: they read as AI-generated. Use a hyphen or a comma.
+ */
+const SITE_CONTENT = [
+  {
+    id: "code",
+    title: "Code",
+    subcategories: [
+      {
+        id: "naming",
+        title: "Naming",
+        opinions: [
+          {
+            id: "long-descriptive-names",
+            claim: "Long, descriptive names beat short, cryptic ones.",
+            arguments: [
+              "Code is read far more often than it is written, so every future reader pays for a vague name.",
+              "Autocomplete makes the extra characters free to type. A cryptic name costs a lookup every single time.",
+              "applyCascadeToAllChildren needs no comment. acc() needs a search through the file."
+            ]
+          }
+        ]
+      },
+      {
+        id: "comments",
+        title: "Comments",
+        opinions: [
+          {
+            id: "comments-explain-why",
+            claim: "A comment should explain why, not what.",
+            arguments: [
+              "The code already says what it does. The reason it exists is the only part that gets lost.",
+              "A comment above an if-block should say what goes wrong if the check is removed, not repeat the condition.",
+              "\"Checks if x is true\" is noise. \"Needed because the API returns null before first sync\" is knowledge."
+            ]
+          },
+          {
+            id: "pinpoint-comments-on-bug-fixes",
+            claim: "Every non-obvious bug fix deserves a comment saying what was broken.",
+            arguments: [
+              "A fix that looks unnecessary is the first thing someone tidies away, and that brings the bug straight back.",
+              "That someone is often future you, or an AI assistant doing a well-meant cleanup.",
+              "Two lines describing the original failure are cheaper than rediscovering it in production."
+            ]
+          }
+        ]
+      },
+      {
+        id: "language",
+        title: "Language",
+        opinions: [
+          {
+            id: "english-everywhere-in-the-codebase",
+            claim: "Identifiers, comments, UI strings and commit messages should all be in English.",
+            arguments: [
+              "Established technical terms such as transform, flex and pointer-events have no good translation, so mixing languages is unavoidable otherwise.",
+              "One language keeps the codebase searchable. Nobody wants to grep for both the English and the translated name.",
+              "Documentation, error messages and Stack Overflow answers are English, so the codebase should match what people paste into it."
+            ]
+          }
+        ]
+      },
+      {
+        id: "browser-quirks",
+        title: "Browser quirks",
+        opinions: [
+          {
+            id: "expose-inline-handlers-on-window",
+            claim: "If a function is called from an inline onclick, attach it to window explicitly.",
+            arguments: [
+              "Strict mode and module scoping mean top-level functions are not reliably global, and Safari is where this tends to bite first.",
+              "window.myHandler = myHandler is one line and works the same in every browser.",
+              "\"Works in Chrome, silently dead in Safari\" is the most expensive kind of bug to find, so spend the one line."
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    id: "workflow",
+    title: "Workflow",
+    subcategories: [
+      {
+        id: "branching",
+        title: "Branching",
+        opinions: [
+          {
+            id: "no-feature-branches-on-small-projects",
+            claim: "On a small project, skip feature branches and land changes directly on a dev branch.",
+            arguments: [
+              "With one or two people, long-lived branches add merge pain and almost no review value.",
+              "A dev branch is the safety net, and main stays a clean record of what is actually in production.",
+              "Small, frequent commits are easier to revert than one large branch merged after a week."
+            ]
+          }
+        ]
+      },
+      {
+        id: "environments",
+        title: "Environments",
+        opinions: [
+          {
+            id: "always-have-a-dev-deploy",
+            claim: "Every project should have a dev deploy that mirrors production.",
+            arguments: [
+              "Seeing a change on a real URL, in real browsers including Safari and a phone, catches what local testing misses.",
+              "It turns \"I think this works\" into \"I looked at it\" before any user is affected.",
+              "Production deploys become boring, which is exactly what they should be."
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    id: "writing",
+    title: "Writing",
+    subcategories: [
+      {
+        id: "tone",
+        title: "Tone and polish",
+        opinions: [
+          {
+            id: "avoid-em-dashes-in-user-facing-text",
+            claim: "Keep em-dashes out of text that users read.",
+            arguments: [
+              "They have become the fingerprint of AI-generated copy, and readers notice within a second.",
+              "A hyphen or a comma does the same job and reads as written by a person.",
+              "On a sales page, anything that makes the copy feel generic costs trust you cannot easily win back."
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    id: "working-with-ai",
+    title: "Working with AI",
+    subcategories: [
+      {
+        id: "handoffs",
+        title: "Handoffs",
+        opinions: [
+          {
+            id: "give-people-things-they-can-use",
+            claim: "Hand over something the person can actually use, not a command they cannot run.",
+            arguments: [
+              "A raw curl command is useless to someone working in a browser or an editor, however correct it is.",
+              "Prefer a file, a clickable step or code that drops into the project.",
+              "Good help is measured by what the other person can do next, not by how correct the answer looks."
+            ]
+          }
+        ]
+      }
+    ]
+  }
+];
+
+function createElement(tagName, className, textContent) {
+  const element = document.createElement(tagName);
+  if (className) element.className = className;
+  if (textContent !== undefined) element.textContent = textContent;
+  return element;
+}
+
+// Reply storage -------------------------------------------------------------------------
+
+function isSharedStorageConfigured() {
+  return REPLIES_DATABASE_URL.trim() !== "";
+}
+
+function buildSharedRepliesUrl(opinionId) {
+  const baseUrl = REPLIES_DATABASE_URL.trim().replace(/\/+$/, "");
+  return opinionId
+    ? `${baseUrl}/replies/${encodeURIComponent(opinionId)}.json`
+    : `${baseUrl}/replies.json`;
+}
+
+// localStorage throws in private windows and when site data is blocked, and the page must still render in those cases.
+function readLocalRepliesSafely() {
+  try {
+    return JSON.parse(localStorage.getItem(LOCAL_REPLIES_STORAGE_KEY)) || {};
+  } catch (error) {
+    return {};
+  }
+}
+
+function writeLocalRepliesSafely(repliesByOpinionId) {
+  try {
+    localStorage.setItem(LOCAL_REPLIES_STORAGE_KEY, JSON.stringify(repliesByOpinionId));
+    return true;
+  } catch (error) {
+    return false;
+  }
+}
+
+// One request for every opinion at once, so the reply counts in the page are right on first paint.
+async function loadAllRepliesByOpinionId() {
+  if (!isSharedStorageConfigured()) return readLocalRepliesSafely();
+
+  const response = await fetch(buildSharedRepliesUrl());
+  if (!response.ok) throw new Error(`Loading replies failed with status ${response.status}`);
+
+  // Firebase stores pushed children as an object keyed by generated ids, so flatten each one to an array.
+  const rawRepliesByOpinionId = (await response.json()) || {};
+  const repliesByOpinionId = {};
+  for (const [opinionId, repliesByGeneratedId] of Object.entries(rawRepliesByOpinionId)) {
+    repliesByOpinionId[opinionId] = Object.values(repliesByGeneratedId);
+  }
+  return repliesByOpinionId;
+}
+
+async function saveReplyForOpinion(opinionId, replyText) {
+  const reply = { text: replyText, createdAt: Date.now() };
+
+  if (isSharedStorageConfigured()) {
+    // No Content-Type header on purpose: text/plain keeps this a simple CORS request without a preflight,
+    // and Firebase parses the body as JSON regardless.
+    const response = await fetch(buildSharedRepliesUrl(opinionId), {
+      method: "POST",
+      body: JSON.stringify(reply)
+    });
+    if (!response.ok) throw new Error(`Saving the reply failed with status ${response.status}`);
+    return reply;
+  }
+
+  const repliesByOpinionId = readLocalRepliesSafely();
+  repliesByOpinionId[opinionId] = repliesByOpinionId[opinionId] || [];
+  repliesByOpinionId[opinionId].push(reply);
+  if (!writeLocalRepliesSafely(repliesByOpinionId)) throw new Error("Browser storage is unavailable");
+  return reply;
+}
+
+// Rendering -----------------------------------------------------------------------------
+
+let currentRepliesByOpinionId = {};
+
+function formatReplyCountLabel(replyCount) {
+  if (replyCount === 0) return "Reply";
+  return replyCount === 1 ? "1 reply" : `${replyCount} replies`;
+}
+
+function renderRepliesForOpinionElement(opinionElement) {
+  const opinionId = opinionElement.dataset.opinionId;
+  const replies = (currentRepliesByOpinionId[opinionId] || []).slice().sort((a, b) => a.createdAt - b.createdAt);
+
+  opinionElement.querySelector("summary").textContent = formatReplyCountLabel(replies.length);
+
+  const replyListElement = opinionElement.querySelector(".reply-list");
+  replyListElement.replaceChildren();
+  for (const reply of replies) {
+    const replyItem = createElement("li");
+    // textContent, never innerHTML: replies come from strangers and must not be able to inject markup.
+    replyItem.append(createElement("span", "reply-text", reply.text));
+    const replyDate = new Date(reply.createdAt).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+    replyItem.append(createElement("span", "reply-date", replyDate));
+    replyListElement.append(replyItem);
+  }
+}
+
+function buildReplyFormElement(opinionId) {
+  const formElement = createElement("form", "reply-form");
+  const textareaId = `reply-field-${opinionId}`;
+
+  const labelElement = createElement("label", "visually-hidden", "Write a reply");
+  labelElement.htmlFor = textareaId;
+
+  const textareaElement = createElement("textarea");
+  textareaElement.id = textareaId;
+  textareaElement.name = "reply";
+  textareaElement.maxLength = MAX_REPLY_LENGTH;
+  textareaElement.required = true;
+  textareaElement.placeholder = "Write a reply...";
+
+  const footerElement = createElement("div", "form-footer");
+  const submitButton = createElement("button", "", "Reply");
+  submitButton.type = "submit";
+  const statusElement = createElement("span", "form-status");
+  statusElement.setAttribute("role", "status");
+  footerElement.append(submitButton, statusElement);
+
+  formElement.append(labelElement, textareaElement, footerElement);
+  return formElement;
+}
+
+function buildOpinionElement(opinion) {
+  const articleElement = createElement("article", "opinion");
+  articleElement.dataset.opinionId = opinion.id;
+  articleElement.append(createElement("h4", "", opinion.claim));
+
+  const argumentListElement = createElement("ul", "arguments");
+  for (const argumentText of opinion.arguments) {
+    argumentListElement.append(createElement("li", "", argumentText));
+  }
+  articleElement.append(argumentListElement);
+
+  const detailsElement = createElement("details", "replies");
+  detailsElement.append(createElement("summary"), createElement("ul", "reply-list"), buildReplyFormElement(opinion.id));
+  articleElement.append(detailsElement);
+
+  return articleElement;
+}
+
+function renderCategoriesIntoPage() {
+  const navElement = document.getElementById("category-nav");
+  const contentElement = document.getElementById("site-content");
+
+  for (const category of SITE_CONTENT) {
+    const navLink = createElement("a", "", category.title);
+    navLink.href = `#category-${category.id}`;
+    navElement.append(navLink);
+
+    const sectionElement = createElement("section", "category");
+    sectionElement.id = `category-${category.id}`;
+    sectionElement.append(createElement("h2", "", category.title));
+
+    for (const subcategory of category.subcategories) {
+      const subcategoryElement = createElement("div", "subcategory");
+      subcategoryElement.append(createElement("h3", "", subcategory.title));
+      for (const opinion of subcategory.opinions) {
+        subcategoryElement.append(buildOpinionElement(opinion));
+      }
+      sectionElement.append(subcategoryElement);
+    }
+    contentElement.append(sectionElement);
+  }
+}
+
+function renderRepliesForAllOpinions() {
+  for (const opinionElement of document.querySelectorAll("article.opinion")) {
+    renderRepliesForOpinionElement(opinionElement);
+  }
+}
+
+function showStorageNotice(message) {
+  const noticeElement = document.getElementById("storage-notice");
+  noticeElement.textContent = message;
+  noticeElement.hidden = false;
+}
+
+// Reply submission ----------------------------------------------------------------------
+
+// One delegated listener instead of inline onclick handlers, so nothing here depends on globals being visible (Safari).
+document.addEventListener("submit", async (event) => {
+  const formElement = event.target;
+  if (!formElement.classList || !formElement.classList.contains("reply-form")) return;
+  event.preventDefault();
+
+  const opinionElement = formElement.closest("article.opinion");
+  const textareaElement = formElement.querySelector("textarea");
+  const submitButton = formElement.querySelector("button");
+  const statusElement = formElement.querySelector(".form-status");
+
+  const replyText = textareaElement.value.trim();
+  if (replyText === "") return;
+
+  submitButton.disabled = true;
+  statusElement.classList.remove("is-error");
+  statusElement.textContent = "Sending...";
+
+  try {
+    const savedReply = await saveReplyForOpinion(opinionElement.dataset.opinionId, replyText);
+    const opinionId = opinionElement.dataset.opinionId;
+    currentRepliesByOpinionId[opinionId] = (currentRepliesByOpinionId[opinionId] || []).concat(savedReply);
+    renderRepliesForOpinionElement(opinionElement);
+    textareaElement.value = "";
+    statusElement.textContent = "";
+  } catch (error) {
+    statusElement.classList.add("is-error");
+    statusElement.textContent = "Could not send the reply. Please try again.";
+  } finally {
+    submitButton.disabled = false;
+  }
+});
+
+async function startSite() {
+  renderCategoriesIntoPage();
+
+  if (!isSharedStorageConfigured()) {
+    showStorageNotice("Replies are saved in this browser only. To show them to every visitor, connect a database (see README.md).");
+  }
+
+  try {
+    currentRepliesByOpinionId = await loadAllRepliesByOpinionId();
+  } catch (error) {
+    // The opinions themselves must stay readable even when the reply database is down.
+    showStorageNotice("Replies could not be loaded right now. You can still read everything.");
+  }
+  renderRepliesForAllOpinions();
+}
+
+startSite();
+</script>
+</body>
+</html>
